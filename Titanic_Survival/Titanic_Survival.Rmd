@@ -1,0 +1,690 @@
+---
+title: "Titanic_Survival"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Titanic Survival 
+
+In this notebook , I'll try to analyse who had the greater chance of survival and try to answer those question.
+And finaly if we find a pattern , We'll build a classification model to predict who survived|Died.
+
+
+
+```{r}
+  
+library("tidyverse")
+
+train <- read_csv("C:/Users/Alaa/Desktop/train.csv")
+test <- read_csv("C:/Users/Alaa/Desktop/test.csv")
+
+data <- bind_rows(train,test)
+
+
+```
+
+
+
+## Let's explore our data and look for interesting variables !
+
+
+How many levels in the variables Embarked we have ? And what's the proportion ? 
+
+```{r}
+data %>%
+  count(Embarked,sort = TRUE)
+```
+
+* Here are the levels are place of emabarkement :
+    + *S:Southampton*
+    + *C:Cherbourg*
+    + *Q:Queenstown*
+ 
+ We also have *two NA* which we'll try and deal with them later.
+ 
+ 
+ What about **Pclass**
+ 
+```{r}
+data %>%
+  count(Pclass,sort = TRUE)
+```
+ 
+
+We have three classes , mostly people are in the third class . 
+We can see there is a relationship between class and Fare (price of the ticket)
+
+
+How is the Variable **Fare** distributed ? 
+
+```{r}
+data %>%
+  ggplot(mapping = aes(x= PassengerId , y = Fare , color = as.factor(Pclass )))+
+  geom_point(size = 2,alpha = 0.7)+
+  theme_minimal()+
+  labs(color = "PClass" , title = "Relationship between fare and Pclass")
+  
+```
+
+
+Clearly the lower the classes the higher the fare 
+
+I see some value equal to 0 , let's check this value in our data
+
+```{r}
+data %>%
+  filter(Fare == 0 |is.na(Fare)) %>%
+  view()
+
+```
+
+Cool ! All passenger with fare equal are mostly crew of the titanic , other working for the AMERICAN LINE ... 
+And got free ticket because their trip were canceled with philadephia ship.
+
+```{r}
+data %>%
+  mutate(statut = ifelse(Fare == 0|is.na(Fare) , "employee" , "passenger")) -> data
+
+
+
+train_p <- data[1:891,] 
+
+train_p %>%
+  filter(Fare == 0 |is.na(Fare)) %>%
+  view()
+train_p %>%
+  group_by(statut)%>%
+  summarise(ratio_dying = 1-  sum(Survived)/n()) ->statut_survival 
+
+statut_survival%>%
+  
+  ggplot(mapping = aes(x = statut , y = ratio_dying , color = statut))+
+  geom_point(size = 3) + 
+  theme_minimal()+
+  geom_segment(aes(x = statut , y = 0 , xend = statut , yend = ratio_dying),size = 2)+
+  scale_y_continuous(label  =scales::percent_format()) + 
+  labs(y = "Probaility of dying")
+  
+
+```
+
+
+
+
+
+
+Let's again do some graphic with some Boxplot
+
+
+```{r}
+data %>%
+  ggplot(mapping = aes(x= as.factor(Pclass), y = Fare , fill = as.factor(Pclass )))+
+  geom_boxplot()+
+  theme_minimal()+
+  labs(fill = "PClass",x = "Pclass")+
+  scale_y_continuous(label = scales::label_dollar())
+
+```
+
+
+Is there a relationship between survival and PClass ?
+
+
+```{r}
+train_p %>%
+  ggplot(mapping = aes(x = Pclass , fill = as.factor(Survived)))+
+  geom_bar(stat = "count")+
+  coord_flip()+
+  theme_minimal()
+  
+```
+
+We can see that most Passenger that died were 3rd class passenger ! And the most who survived were 1rst class passenger  !
+
+
+Back in the boxplot the Pclass = 1 , had a lot of variation when it comes to fare prices .
+We'll see if the price affect the survival rate
+
+
+```{r}
+train_p %>%
+  filter(Pclass == 1)%>%
+  summary()  #The median of the variable Fare is 60.29
+
+train_p %>%
+  filter(Pclass ==1) %>%
+  mutate(Price_Pclass = case_when(Fare < 60.29 ~ "below_median",
+                                  Fare >=60.29 ~ "top_median"))%>%
+  ggplot(mapping = aes(x = Price_Pclass , fill  =as.factor(Survived)))+
+  geom_bar(stat = "count")+
+  theme_minimal()
+```
+
+There is a difference ! What if we did more ? let's try and didive it in 4 . 
+
+```{r}
+train_p %>%
+  filter(Pclass ==1) %>%
+  mutate(Price_Pclass = case_when(Fare < 30.92 ~ "quantile_1",
+                                  Fare >=30.92 & Fare < 60.29 ~ "quantile_2",
+                                  Fare >=60.29 & Fare < 93.5 ~"quantile_3",
+                                  Fare >=93.5 ~ "quantile_4"))%>%
+  ggplot(mapping = aes(x = Price_Pclass , fill  =as.factor(Survived)))+
+  geom_bar(stat = "count")+
+  theme_minimal()+
+  coord_flip()+
+  labs(fill = "Survived" , x = "Quantile" , title = "Quantitle of variable fare for the passenger of 1rst class") 
+```
+Let's add this price_pclass to our data
+
+```{r}
+data %>%
+    mutate(Price_Pclass = case_when(Pclass==1 & Fare < 30.92 ~ "Pclass1_4",
+                                  Pclass==1 & Fare >=30.92 & Fare < 60.29 ~ "Pclass1_3",
+                                  Pclass==1 & Fare >=60.29 & Fare < 93.5 ~"Pclass1_2",
+                                  Pclass==1 & Fare >=93.5 ~ "Pclass1_1",
+                                  TRUE ~ as.character(Pclass))) -> data
+```
+
+
+Hmm this is sad , but it seems once again money buy survival  , or maybe this had to do with the location of the cabin ?  
+
+Can we do better than the quantile ? 
+
+```{r}
+data %>%
+  count(Fare,sort = TRUE)%>%
+  head(n= 15) %>%
+  inner_join(data,by ="Fare")%>%
+  group_by(Fare)%>%
+  summarise(ratio = sum(Survived,na.rm = TRUE)/n())%>%
+  ungroup()%>%
+  mutate(Fare = as.factor(Fare),
+         Fare = fct_reorder(Fare,ratio,sum))%>%
+  ggplot(mapping = aes(x = as.factor(Fare) , y = ratio ,fill =as.factor(Fare)))+
+  theme_minimal()+
+  geom_bar(stat = "identity")+
+  coord_flip()+
+  theme(panel.grid = element_blank(),
+        legend.position = "none")+
+  labs(x ="Fare as a factor variable")#Graphic Fare
+
+
+
+data%>%
+  filter(Fare == 512.3292 | Fare ==263.0000 & Sex =="female") %>%
+  view()
+```
+
+There is one exception in the graphic fare the fare == 7.925 has hight rate of survival and I wonder why ???
+Let's take a look
+
+
+```{r}
+data %>%
+  filter(Fare == 7.925)%>%
+  view() #Occupation == General Labourer
+        # Nationnality mostly finnish
+
+data %>%
+  filter(Fare == 26.55)%>%
+  view() #businessman ,lawyer,journalist ....
+
+
+data %>%
+  filter(Fare == 7.75)%>%
+  view() #nationality Irsih 
+         #occuption mostly farmer
+
+data %>%
+  filter(Fare == 13)%>%
+  view() # E D F ? 
+         #Nationnality english danish polish ...
+
+
+data %>%
+  filter(Fare == 7.2292)%>%
+  view() #Lebanese =) 
+
+
+
+data %>%
+  filter(Fare == 7.8958)%>%
+  view() #bulgarian
+
+data %>%
+  count(Fare,sort = TRUE)%>%
+  filter(n ==4) %>%
+  inner_join(data,by ="Fare")%>%
+  view()
+
+
+data %>%
+  group_by(Fare,Ticket)%>%
+  summarise(count = n())%>%
+  filter( count >= 2) %>%
+  arrange((desc(count)))%>%
+  view()
+
+data %>%
+  group_by(Ticket)%>%
+  mutate(Linked_person = n(),
+         Linked_person = as.factor(Linked_person)) %>%
+  ungroup() ->data
+  
+
+data %>%
+  filter(!is.na(Survived))%>%
+  ggplot(mapping = aes(x = Linked_person , y= as.factor(Survived) , fill = as.factor(Survived)))+
+  geom_bar(stat = "identity")+
+  theme_minimal()+
+  facet_wrap(~Sex)+
+  coord_flip() 
+  
+
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+Let's look at the ticket variable and see if we can find something interesting
+```{r}
+data %>%
+  count(Ticket,sort = TRUE)%>%
+  head()
+
+
+
+```
+
+
+After checking the code below , it seems female in the Pclass with expensive had very high chance of survival , and male not the same case . The only explanation is that there was no exception no matter where you came from it was women
+and children first , but male in the first class were making sure that their family (women and children) were on the
+lifeboat.
+
+
+Let's look at the lass graphic but with sex as factor now also.
+
+```{r}
+
+train_p %>%
+  filter(Pclass ==1) %>%
+  mutate(Price_Pclass = case_when(Fare < 30.92 ~ "quantile_1",
+                                  Fare >=30.92 & Fare < 60.29 ~ "quantile_2",
+                                  Fare >=60.29 & Fare < 93.5 ~"quantile_3",
+                                  Fare >=93.5 ~ "quantile_4"))%>%
+  ggplot(mapping = aes(x = Price_Pclass , fill  =as.factor(Survived)))+
+  geom_bar(stat = "count")+
+  theme_minimal()+
+  coord_flip()+
+  labs(fill = "Survived" , x = "Quantile" , title = "Quantitle of variable fare for the passenger of 1rst class") +
+  facet_wrap(~Sex)
+```
+
+I want to check the same graph but also with Age as a variable
+
+```{r}
+train_p %>%
+  filter(Pclass ==1    & !is.na(Age)) %>%
+  mutate(Price_Pclass = case_when(Fare < 30.92 ~ "quantile_1",
+                                  Fare >=30.92 & Fare < 60.29 ~ "quantile_2",
+                                  Fare >=60.29 & Fare < 93.5 ~"quantile_3",
+                                  Fare >=93.5 ~ "quantile_4"),
+         age_category =  case_when(Age < 16 ~"child",
+                                   Age >= 16 ~ "adult")) -> pclass1_children
+  pclass1_children%>%
+  ggplot(mapping = aes(x = Price_Pclass , fill  =as.factor(Survived)))+
+  geom_bar(stat = "count")+
+  theme_minimal()+
+  coord_flip()+
+  labs(fill = "Survived" , x = "Quantile" , title = "Quantitle of variable fare for the passenger of 1rst class") +
+  facet_wrap(~Sex+age_category)
+```
+
+We have a lot of **NA** in the age variable so we can't really make a conclusion here .
+
+
+```{r}
+pclass1_children %>%
+  filter(age_category == "child" & Sex == "female")%>%
+  view()
+```
+
+
+The girl who didn't survive was a baby =( this means her mother didn't also survive
+
+
+Let's check the distribution of age 
+
+
+
+
+
+```{r}
+data %>%
+  filter(!is.na(Age))%>%
+  ggplot(mapping = aes(x  = Age ))+
+  geom_histogram(fill  = "#f1c40f")+
+  theme_minimal()+
+  labs(title = "Distribution of the Age variable")
+
+
+data %>%
+  filter(!is.na(Age))%>%
+  ggplot(mapping = aes(x = Age))+
+  geom_density()+
+  theme_minimal()
+
+
+
+```
+I want to transform my age variable to a category variable , but before doing that I need to fix the NA . 
+I'm going to use the well known mice package for that
+
+
+```{r}
+library("mice")
+
+md.pattern(data)
+
+
+mice_pred <- mice(data = data[,!names(data) %in% c("PassengerId","Name","Survived","Cabin" ,"Fare")], method = "rf")
+
+mice_output <- complete(mice_pred)
+
+```
+
+
+Let's check if the density is still the same ! 
+
+
+
+```{r}
+data %>%
+  ggplot(mapping = aes(x = Age))+
+  geom_density(color = "blue", size = 1.5 )+
+  geom_density(aes(x = mice_output$Age ),color = "red",size = 1.5)+
+  theme_minimal()
+```
+That's great !!! The distribution hasn't changed 
+
+```{r}
+data$Age <- mice_output$Age
+```
+
+Fixing the Embarked NA value
+```{r}
+data %>%
+  filter(is.na(Embarked))%>%
+  view()
+```
+I googled and they both come from Southampton , suppose we didn't have google or another source we could have guess
+by the cabin variable , they were in cabin B28
+
+```{r}
+data %>%
+  filter(grepl("B2",Cabin))%>%
+  ggplot(mapping = aes(x = Embarked, fill = Embarked))+
+  geom_bar(stat = "count")+
+  theme_minimal()
+
+
+
+data$Embarked[is.na(data$Embarked)] <- "S"
+```
+
+```{r}
+
+data %>%
+  mutate(Embarked_Pclass = paste0(Embarked,"_",Price_Pclass)) ->data
+```
+
+
+
+
+##Prediction 
+
+
+```{r}
+library("randomForest")
+
+data %>%
+  mutate_if(is.character,factor)%>%
+  mutate(Survived = as.factor(Survived))->data
+
+train_p <- data[1:891,]
+test_p <- data[892:1309,]
+str(train_p)
+
+
+model_rf <-randomForest(Survived ~ Age + Sex  + statut + Linked_person + Embarked_Pclass , data = train_p)
+
+prediction <- predict(model_rf,test_p)
+
+solutions2 <- data.frame(PassengerId = test_p$PassengerId,Survived = prediction)
+
+write.csv(solutions2 , file = "solutions_3.csv", row.names = FALSE)
+
+```
+
+
+Let's analyse the age variable
+
+
+```{r}
+summary(data$Age)
+
+data %>%
+  filter(!is.na(Survived))%>%
+  group_by(Age)%>%
+  mutate(count = n())%>%
+  filter(count >= 5) %>%
+  summarise(ratio_age = sum(Survived)/n())%>%
+  ggplot(mapping = aes(x= Age , y= ratio_age))+
+  geom_line()+
+  theme_minimal()+
+  scale_x_continuous(breaks = seq(0,50,2))+
+  expand_limits(y =0 ,x = 0) #Hard to see any difference
+
+#0 - 4 age_1
+#5-18 - age_2
+#19 - 35 
+#35 -50 
+#50 - 60
+#60+
+
+
+data %>%
+  mutate(age_category = case_when(Age <= 4 ~ "age_1",
+                                  Age >4 & Age <=18 ~ "age_2",
+                                  Age>18 & Age <40 ~  "age_3",
+                                  Age >= 40 ~"age_4")) ->data
+  data %>%
+  filter(!is.na(Survived))%>%
+    mutate(age_category = fct_reorder(age_category , as.numeric(Survived),mean))%>%
+  ggplot(mapping = aes(x = age_category , fill =as.factor(Survived) ) )+
+  geom_bar(stat = "count",position = "stack")+
+  theme_minimal()+
+  coord_flip()
+
+
+data %>%
+  ->data
+
+str(data)
+data$Linked_person <- as.factor(data$Linked_person)
+
+data%>%
+  filter(!is.na(Survived))%>%
+  ggplot(mapping = aes(x = Linked_person , fill = as.factor(Survived)))+
+  geom_bar(stat = "count")+
+  theme_minimal()+
+  coord_flip()+
+  facet_wrap(~Sex+age_category)
+
+
+
+```
+
+
+
+```{r}
+library("randomForest")
+
+data %>%
+  mutate(Embarked_Pclass = paste0(Embarked,"_",Pclass),
+         Embarked_Pclass = as.factor(Embarked_Pclass)) ->data
+
+data %>%
+  mutate_if(is.character,factor)->data
+
+data$Survived <- as.factor(data$Survived)
+
+
+
+train_p <- data[1:891,]
+test_p <- data[892:1309,]
+str(train_p)
+
+names(train_p)
+model_rf_evo <- randomForest(Survived ~ age_category + Embarked_Pclass + + statut + Sex  ,data = train_p)
+
+
+
+
+solutions <- predict(model_rf_evo,test_p)
+
+resutlats <- data.frame(PassengerId = test_p$PassengerId , Survived = solutions)
+write.csv(resutlats ,file = "reslutats_finales+fare.csv",row.names = FALSE)
+str(data)
+
+
+plot(model_rf_evo)
+
+```
+
+
+# Tuning the Random Forest model 
+
+
+```{r}
+library("caret")
+
+
+ctrl <- trainControl(method = "repeatedcv",number = 10,repeats = 10)
+
+grid_rf <- expand.grid(.mtry = c(7,8,9))
+
+set.seed(129)
+
+m_rf <- train(Survived ~ age_category + Embarked + Pclass + Linked_person + statut + Sex + Fare , data = train_p ,method = "rf",trControl = ctrl,tuneGrid = grid_rf)
+
+?train()
+
+
+```
+
+
+```{r}
+library("C50")
+
+sum(is.na(data$Embarked))
+
+
+str(test_p)
+model_tree <- C5.0(Survived ~ age_category + Embarked + Pclass + Linked_person + statut + Sex + Fare,data = train_p)
+
+summary(model_tree)
+prediction_tree <- predict(model_tree,test_p)
+prediction
+
+solutions_tree <- data.frame(PassengerId = test_p$PassengerId , Survived = prediction_tree)
+
+write.csv(solutions_tree,file = "solutions_tree.csv",row.names = FALSE)
+
+table(resutlats$Survived,solutions_tree$Survived)
+```
+
+
+
+Mr Joseph Bruce Ismay : OwnerShip lol
+
+
+```{r}
+data %>%
+  filter(Fare==0)%>%
+  view()
+
+data %>%
+  filter(Fare > 200)%>%
+  view()
+
+data %>%
+  filter(is.na(Fare))%>%
+  view()
+
+
+data$Fare[is.na(data$Fare)]<- 0
+```
+
+
+```{r}
+
+train_p %>%
+  mutate(Embarked_Pclass = fct_reorder(Embarked_Pclass,as.numeric(Survived),mean))%>%
+  ggplot(mapping = aes(x = Embarked_Pclass , fill = as.factor(Survived)) )+
+  geom_bar(stat = "count")+
+  theme_minimal()+
+  coord_flip()+
+  facet_wrap(~Sex,"free")
+
+```
+
+Let's try xgboost
+
+```{r}
+install.packages("xgboost")
+library("xgboost")
+
+model_mat <- model.matrix(~. , data = train_p[c("Embarked_Pclass","age_category","Sex","Fare","Linked_person","statut")])
+
+model_test <- model.matrix(~. , data = test_p[c("Embarked_Pclass","age_category","Sex","Fare","Linked_person","statut")])
+
+labels <- as.numeric(train_p$Survived)-1
+labels_test <- test_p$Survived
+
+dtest <- xgb.DMatrix(data=model_test,label = labels_test)
+dtrain <- xgb.DMatrix(data = model_mat,label = labels) 
+
+model <- xgboost(data = dtrain, # the data   
+                 nround = 39, # max number of boosting iterations
+                 objective = "binary:logistic")
+solutions_xgboost<- predict(model,dtest,type= "response")
+solutions_xgboost <- ifelse(solutions_xgboost>=0.5,1,0)
+
+table(solutions_boost$Survived,resutlats$Survived)
+model
+
+solutions_boost <- data.frame(PassengerId = test_p$PassengerId , Survived = solutions_xgboost)
+
+write.csv(solutions_boost,file = "solutions_boost.csv",row.names = FALSE)
+
+params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.3, gamma=0, max_depth=6, min_child_weight=1, subsample=1, colsample_bytree=1)
+
+xgbcv <- xgb.cv( params = params, data = dtrain, nrounds = 100, nfold = 5, showsd = T, stratified = T, print.every.n = 10, early.stop.round = 20, maximize = F)
+
+xgbcv$best_iteration
+
+
+```
+
